@@ -2,7 +2,7 @@ import yfinance as yf
 import ta
 import requests
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 WEBHOOK = "https://discord.com/api/webhooks/1554001805283958904/E48nWVAZWMfeOQZGUfpCVupoHzEvCBojFC8DUfTsvh2n57UhUyKfksXaTmunS9XBg9ZY"
 
@@ -34,34 +34,34 @@ def get_signal():
     downtrend = e20 < e50 < e200
     if rsi_now > 64 and rsi_now < rsi_prev:
         signal = "🔴 PUT (DOWN)"
-        reason = f"Overbought drop (RSI {rsi_prev:.1f} → {rsi_now:.1f})"
+        reason = f"Overbought drop (RSI {rsi_prev:.1f} to {rsi_now:.1f})"
     elif rsi_now < 36 and rsi_now > rsi_prev:
         signal = "🟢 CALL (UP)"
-        reason = f"Oversold bounce (RSI {rsi_prev:.1f} → {rsi_now:.1f})"
+        reason = f"Oversold bounce (RSI {rsi_prev:.1f} to {rsi_now:.1f})"
     elif uptrend and rsi_prev < 45 and rsi_now > rsi_prev and rsi_now < 65:
         signal = "🟢 CALL (UP)"
-        reason = f"Uptrend + RSI rising ({rsi_prev:.1f} → {rsi_now:.1f})"
+        reason = f"Uptrend + RSI rising ({rsi_prev:.1f} to {rsi_now:.1f})"
     elif downtrend and rsi_prev > 55 and rsi_now < rsi_prev and rsi_now > 35:
         signal = "🔴 PUT (DOWN)"
-        reason = f"Downtrend + RSI falling ({rsi_prev:.1f} → {rsi_now:.1f})"
+        reason = f"Downtrend + RSI falling ({rsi_prev:.1f} to {rsi_now:.1f})"
     else:
         reason = f"No clear setup (RSI {rsi_now:.1f})"
     return signal, reason, price, rsi_now
 
-print("🤖 Signal bot started (cloud mode).")
+print("Signal bot started (cloud mode).")
 
 while True:
     try:
         signal, reason, price, rsi = get_signal()
-        now = datetime.now().strftime("%H:%M:%S")
+        now = datetime.now(timezone(timedelta(hours=1))).strftime("%H:%M:%S")
         print(f"[{now}] {signal} | Price: {price:.5f} | RSI: {rsi:.2f}")
         msg = (
-            f"**📊 EUR/USD M15**\n"
+            f"**EUR/USD M15**\n"
             f"**{signal}**\n"
-            f"💵 Price: `{price:.5f}`\n"
-            f"📈 RSI: `{rsi:.2f}`\n"
-            f"📝 {reason}\n"
-            f"🕐 {now}"
+            f"Price: `{price:.5f}`\n"
+            f"RSI: `{rsi:.2f}`\n"
+            f"Reason: {reason}\n"
+            f"Time: {now}"
         )
         send_to_discord(msg)
         print("Waiting 15 minutes...\n")
