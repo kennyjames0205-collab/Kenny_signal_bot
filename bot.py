@@ -1,10 +1,11 @@
+import os
 import yfinance as yf
 import ta
 import requests
 import time
 from datetime import datetime, timezone, timedelta
 
-WEBHOOK = "https://discord.com/api/webhooks/1554026595134999709/hFnRH4FpaNJFFU-6DJmnbJYN_ecurCaSepyo5-_EOF4lYz3k9oVHHU6O6DeTVhoxWt4G"
+WEBHOOK = os.environ.get("WEBHOOK")
 
 def send_to_discord(msg):
     try:
