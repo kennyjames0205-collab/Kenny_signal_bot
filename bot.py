@@ -4,7 +4,7 @@ import requests
 import time
 from datetime import datetime, timezone, timedelta
 
-WEBHOOK = "https://discord.com/api/webhooks/1554001805283958904/E48nWVAZWMfeOQZGUfpCVupoHzEvCBojFC8DUfTsvh2n57UhUyKfksXaTmunS9XBg9ZY"
+WEBHOOK = "https://discord.com/api/webhooks/1554026595134999709/hFnRH4FpaNJFFU-6DJmnbJYN_ecurCaSepyo5-_EOF4lYz3k9oVHHU6O6DeTVhoxWt4G"
 
 def send_to_discord(msg):
     try:
