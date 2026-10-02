@@ -2,9 +2,11 @@ import yfinance as yf
 import ta
 import requests
 import time
-from datetime import datetime, timezone, timeFnRH4FpaNJFFU-6DJmnbJYN_ecurCaSepyo5-_EOF4lYz3k9oVHHU6O6DeTVhoxWt4G"
+from datetime import datetime, timezone, timedelta
 
 WEBHOOK = "https://discord.com/api/webhooks/1554026595134999709/hFnRH4FpaNJFFU-6DJmnbJYN_ecurCaSepyo5-_EOF4lYz3k9oVHHU6O6DeTVhoxWt4G"
+
+def send_to_discord(msg):
     try:
         requests.post(WEBHOOK, json={"content": msg})
     except Exception as e:
@@ -31,16 +33,16 @@ def get_signal():
     uptrend = e20 > e50 > e200
     downtrend = e20 < e50 < e200
     if rsi_now > 64 and rsi_now < rsi_prev:
-        signal = "🔴 PUT (DOWN)"
+        signal = "PUT (DOWN)"
         reason = f"Overbought drop (RSI {rsi_prev:.1f} to {rsi_now:.1f})"
     elif rsi_now < 36 and rsi_now > rsi_prev:
-        signal = "🟢 CALL (UP)"
+        signal = "CALL (UP)"
         reason = f"Oversold bounce (RSI {rsi_prev:.1f} to {rsi_now:.1f})"
     elif uptrend and rsi_prev < 45 and rsi_now > rsi_prev and rsi_now < 65:
-        signal = "🟢 CALL (UP)"
+        signal = "CALL (UP)"
         reason = f"Uptrend + RSI rising ({rsi_prev:.1f} to {rsi_now:.1f})"
     elif downtrend and rsi_prev > 55 and rsi_now < rsi_prev and rsi_now > 35:
-        signal = "🔴 PUT (DOWN)"
+        signal = "PUT (DOWN)"
         reason = f"Downtrend + RSI falling ({rsi_prev:.1f} to {rsi_now:.1f})"
     else:
         reason = f"No clear setup (RSI {rsi_now:.1f})"
