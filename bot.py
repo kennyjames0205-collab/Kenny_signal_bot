@@ -87,15 +87,15 @@ def get_signal():
     downtrend = e20 < e50 < e200
 
     if rsi_now > 64 and rsi_now < rsi_prev:
-        return "PUT", "Overbought drop (RSI " + str(round(rsi_prev, 1)) + " -> " + str(round(rsi_now, 1)) + ")", price, rsi_now
+        return "PUT", "Overbought drop", price, rsi_now
     if rsi_now < 36 and rsi_now > rsi_prev:
-        return "CALL", "Oversold bounce (RSI " + str(round(rsi_prev, 1)) + " -> " + str(round(rsi_now, 1)) + ")", price, rsi_now
+        return "CALL", "Oversold bounce", price, rsi_now
     if uptrend and rsi_prev < 45 and rsi_now > rsi_prev and rsi_now < 65:
         return "CALL", "Uptrend + RSI rising", price, rsi_now
     if downtrend and rsi_prev > 55 and rsi_now < rsi_prev and rsi_now > 35:
         return "PUT", "Downtrend + RSI falling", price, rsi_now
 
-    return "NO TRADE", "No setup (RSI " + str(round(rsi_now, 1)) + ")", price, rsi_now
+    return "NO TRADE", "No setup", price, rsi_now
 
 print("MT5 Auto-Trade Bot v5 starting...")
 send_discord("MT5 Auto-Trade Bot v5 starting...")
@@ -116,7 +116,6 @@ while True:
     try:
         account_id = start_session()
         if not account_id:
-            print("Session refresh failed")
             time.sleep(300)
             continue
 
@@ -126,7 +125,7 @@ while True:
 
         if signal != "NO TRADE":
             if signal == last_signal and (time.time() - last_signal_time) < 1200:
-                print("Duplicate signal - skipped")
+                print("Duplicate skipped")
             else:
                 side = "BUY" if signal == "CALL" else "SELL"
                 ticket = place_order(account_id, side)
@@ -143,16 +142,16 @@ while True:
                     )
                     last_signal = signal
                     last_signal_time = time.time()
-                    print("Order placed:", side, "ticket", ticket)
+                    print("Order:", side, "ticket", ticket)
 
                     time.sleep(900)
 
                     account_id = start_session()
                     if account_id and close_position(account_id, ticket):
-                        send_discord("Position `" + str(ticket) + "` closed on MT5.")
+                        send_discord("Position `" + str(ticket) + "` closed.")
                         print("Closed", ticket)
                     else:
-                        send_discord("Could not auto-close `" + str(ticket) + "`. Close manually.")
+                        send_discord("Could not close `" + str(ticket) + "`. Manual close needed.")
                     continue
 
         print("Waiting 15 min...")
