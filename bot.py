@@ -70,7 +70,6 @@ def get_signal():
     if hasattr(data.columns, "get_level_values"):
         data.columns = data.columns.get_level_values(0)
     data["rsi"] = ta.momentum.RSIIndicator(data["Close"], window=14).rsi()
-    data["ema20"] = ta.trend.EMAIndicator(data["Close"], window=20).ema_indicator()
     data["ema50"] = ta.trend.EMAIndicator(data["Close"], window=50).ema_indicator()
     data["ema200"] = ta.trend.EMAIndicator(data["Close"], window=200).ema_indicator()
 
@@ -78,27 +77,30 @@ def get_signal():
     prev = data.iloc[-2]
     rsi_now = float(last["rsi"])
     rsi_prev = float(prev["rsi"])
-    e20 = float(last["ema20"])
     e50 = float(last["ema50"])
     e200 = float(last["ema200"])
     price = float(last["Close"])
 
-    uptrend = e20 > e50 > e200
-    downtrend = e20 < e50 < e200
+    # TREND FILTER: price must be above EMA200 for CALL, below for PUT
+    real_uptrend = price > e200
+    real_downtrend = price < e200
 
-    if rsi_now > 64 and rsi_now < rsi_prev:
-        return "PUT", "Overbought drop", price, rsi_now
-    if rsi_now < 36 and rsi_now > rsi_prev:
-        return "CALL", "Oversold bounce", price, rsi_now
-    if uptrend and rsi_prev < 45 and rsi_now > rsi_prev and rsi_now < 65:
-        return "CALL", "Uptrend + RSI rising", price, rsi_now
-    if downtrend and rsi_prev > 55 and rsi_now < rsi_prev and rsi_now > 35:
+    # PUT only in confirmed downtrend
+    if real_downtrend and rsi_now > 64 and rsi_now < rsi_prev:
+        return "PUT", "Downtrend + overbought drop (RSI " + str(round(rsi_prev, 1)) + " to " + str(round(rsi_now, 1)) + ")", price, rsi_now
+    if real_downtrend and e50 < e200 and rsi_prev > 55 and rsi_now < rsi_prev and rsi_now > 35:
         return "PUT", "Downtrend + RSI falling", price, rsi_now
 
-    return "NO TRADE", "No setup", price, rsi_now
+    # CALL only in confirmed uptrend
+    if real_uptrend and rsi_now < 36 and rsi_now > rsi_prev:
+        return "CALL", "Uptrend + oversold bounce (RSI " + str(round(rsi_prev, 1)) + " to " + str(round(rsi_now, 1)) + ")", price, rsi_now
+    if real_uptrend and e50 > e200 and rsi_prev < 45 and rsi_now > rsi_prev and rsi_now < 65:
+        return "CALL", "Uptrend + RSI rising", price, rsi_now
 
-print("MT5 Auto-Trade Bot v5 starting...")
-send_discord("MT5 Auto-Trade Bot v5 starting...")
+    return "NO TRADE", "No setup with trend (RSI " + str(round(rsi_now, 1)) + ", price " + ("above" if real_uptrend else "below") + " EMA200)", price, rsi_now
+
+print("MT5 Auto-Trade Bot v6 (trend filter) starting...")
+send_discord("MT5 Auto-Trade Bot v6 starting with trend filter...")
 
 account_id = start_session()
 if not account_id:
@@ -121,7 +123,7 @@ while True:
 
         signal, reason, price, rsi = get_signal()
         now = datetime.now(timezone(timedelta(hours=1))).strftime("%H:%M:%S")
-        print("[" + now + "] " + signal + " | " + str(price) + " | RSI " + str(round(rsi, 2)))
+        print("[" + now + "] " + signal + " | " + str(round(price, 5)) + " | RSI " + str(round(rsi, 2)))
 
         if signal != "NO TRADE":
             if signal == last_signal and (time.time() - last_signal_time) < 1200:
@@ -132,7 +134,7 @@ while True:
 
                 if ticket:
                     send_discord(
-                        "**MT5 AUTO-TRADE**\n" +
+                        "**MT5 AUTO-TRADE (v6)**\n" +
                         "**" + signal + "** `" + SYMBOL + "`\n" +
                         "Entry: `" + str(round(price, 5)) + "`\n" +
                         "RSI: `" + str(round(rsi, 2)) + "`\n" +
