@@ -15,6 +15,11 @@ SYMBOL = "EURUSDm"
 VOLUME = 0.01
 BASE = "https://api.tickerall.com"
 
+# Pip sizes for EURUSD (Exness 5-digit)
+PIP = 0.0001
+SL_PIPS = 10      # Stop-loss distance
+TP_PIPS = 15      # Take-profit distance
+
 def send_discord(msg):
     try:
         requests.post(DISCORD_WEBHOOK, json={"content": msg})
@@ -44,17 +49,45 @@ def start_session():
         print("Session error:", e)
     return None
 
-def place_order(account_id, side):
-    data = {"type": "market", "symbol": SYMBOL, "side": side, "volume": VOLUME}
+def get_current_price(account_id):
+    try:
+        r = requests.get(BASE + "/v1/accounts/" + account_id + "/symbols",
+                         headers=make_headers(), timeout=30)
+        if r.status_code == 200:
+            data = r.json()
+            for s in data.get("symbols", []):
+                if s.upper().startswith("EURUSD"):
+                    return None
+    except Exception as e:
+        print("Price fetch error:", e)
+    return None
+
+def place_order(account_id, side, entry_price):
+    # Calculate SL and TP based on side
+    if side == "BUY":
+        sl = round(entry_price - (SL_PIPS * PIP), 5)
+        tp = round(entry_price + (TP_PIPS * PIP), 5)
+    else:  # SELL
+        sl = round(entry_price + (SL_PIPS * PIP), 5)
+        tp = round(entry_price - (TP_PIPS * PIP), 5)
+
+    data = {
+        "type": "market",
+        "symbol": SYMBOL,
+        "side": side,
+        "volume": VOLUME,
+        "stopLoss": sl,
+        "takeProfit": tp
+    }
     try:
         r = requests.post(BASE + "/v1/accounts/" + account_id + "/orders",
                           json=data, headers=make_headers(), timeout=30)
         if r.status_code in (200, 201):
-            return r.json().get("ticket")
+            return r.json().get("ticket"), sl, tp
         print("Order fail:", r.status_code, r.json())
     except Exception as e:
         print("Order error:", e)
-    return None
+    return None, None, None
 
 def close_position(account_id, ticket):
     try:
@@ -81,26 +114,22 @@ def get_signal():
     e200 = float(last["ema200"])
     price = float(last["Close"])
 
-    # TREND FILTER: price must be above EMA200 for CALL, below for PUT
     real_uptrend = price > e200
     real_downtrend = price < e200
 
-    # PUT only in confirmed downtrend
     if real_downtrend and rsi_now > 64 and rsi_now < rsi_prev:
-        return "PUT", "Downtrend + overbought drop (RSI " + str(round(rsi_prev, 1)) + " to " + str(round(rsi_now, 1)) + ")", price, rsi_now
+        return "PUT", "Downtrend + overbought drop", price, rsi_now
     if real_downtrend and e50 < e200 and rsi_prev > 55 and rsi_now < rsi_prev and rsi_now > 35:
         return "PUT", "Downtrend + RSI falling", price, rsi_now
-
-    # CALL only in confirmed uptrend
     if real_uptrend and rsi_now < 36 and rsi_now > rsi_prev:
-        return "CALL", "Uptrend + oversold bounce (RSI " + str(round(rsi_prev, 1)) + " to " + str(round(rsi_now, 1)) + ")", price, rsi_now
+        return "CALL", "Uptrend + oversold bounce", price, rsi_now
     if real_uptrend and e50 > e200 and rsi_prev < 45 and rsi_now > rsi_prev and rsi_now < 65:
         return "CALL", "Uptrend + RSI rising", price, rsi_now
 
-    return "NO TRADE", "No setup with trend (RSI " + str(round(rsi_now, 1)) + ", price " + ("above" if real_uptrend else "below") + " EMA200)", price, rsi_now
+    return "NO TRADE", "No setup with trend (RSI " + str(round(rsi_now, 1)) + ")", price, rsi_now
 
-print("MT5 Auto-Trade Bot v6 (trend filter) starting...")
-send_discord("MT5 Auto-Trade Bot v6 starting with trend filter...")
+print("MT5 Auto-Trade Bot v7 (trend + SL/TP) starting...")
+send_discord("MT5 Auto-Trade Bot v7 starting — with stop-loss + take-profit")
 
 account_id = start_session()
 if not account_id:
@@ -130,13 +159,15 @@ while True:
                 print("Duplicate skipped")
             else:
                 side = "BUY" if signal == "CALL" else "SELL"
-                ticket = place_order(account_id, side)
+                ticket, sl, tp = place_order(account_id, side, price)
 
                 if ticket:
                     send_discord(
-                        "**MT5 AUTO-TRADE (v6)**\n" +
+                        "**MT5 AUTO-TRADE (v7)**\n" +
                         "**" + signal + "** `" + SYMBOL + "`\n" +
                         "Entry: `" + str(round(price, 5)) + "`\n" +
+                        "SL: `" + str(sl) + "` (10 pips)\n" +
+                        "TP: `" + str(tp) + "` (15 pips)\n" +
                         "RSI: `" + str(round(rsi, 2)) + "`\n" +
                         "Ticket: `" + str(ticket) + "`\n" +
                         "Reason: " + reason + "\n" +
@@ -144,16 +175,15 @@ while True:
                     )
                     last_signal = signal
                     last_signal_time = time.time()
-                    print("Order:", side, "ticket", ticket)
+                    print("Order:", side, "ticket", ticket, "SL", sl, "TP", tp)
 
                     time.sleep(900)
 
                     account_id = start_session()
-                    if account_id and close_position(account_id, ticket):
-                        send_discord("Position `" + str(ticket) + "` closed.")
+                    if account_id:
+                        close_position(account_id, ticket)
+                        send_discord("Position `" + str(ticket) + "` closed (or hit SL/TP).")
                         print("Closed", ticket)
-                    else:
-                        send_discord("Could not close `" + str(ticket) + "`. Manual close needed.")
                     continue
 
         print("Waiting 15 min...")
