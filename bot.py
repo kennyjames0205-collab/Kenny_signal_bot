@@ -15,10 +15,10 @@ SYMBOL = "EURUSDm"
 VOLUME = 0.01
 BASE = "https://api.tickerall.com"
 
-# Pip sizes for EURUSD (Exness 5-digit)
 PIP = 0.0001
-SL_PIPS = 10      # Stop-loss distance
-TP_PIPS = 15      # Take-profit distance
+SL_PIPS = 10
+TP_PIPS = 15
+BREAKEVEN_PIPS = 5
 
 def send_discord(msg):
     try:
@@ -49,25 +49,21 @@ def start_session():
         print("Session error:", e)
     return None
 
-def get_current_price(account_id):
+def get_open_positions(account_id):
     try:
-        r = requests.get(BASE + "/v1/accounts/" + account_id + "/symbols",
+        r = requests.get(BASE + "/v1/accounts/" + account_id,
                          headers=make_headers(), timeout=30)
         if r.status_code == 200:
-            data = r.json()
-            for s in data.get("symbols", []):
-                if s.upper().startswith("EURUSD"):
-                    return None
+            return r.json().get("positions", [])
     except Exception as e:
-        print("Price fetch error:", e)
-    return None
+        print("Fetch positions error:", e)
+    return []
 
 def place_order(account_id, side, entry_price):
-    # Calculate SL and TP based on side
     if side == "BUY":
         sl = round(entry_price - (SL_PIPS * PIP), 5)
         tp = round(entry_price + (TP_PIPS * PIP), 5)
-    else:  # SELL
+    else:
         sl = round(entry_price + (SL_PIPS * PIP), 5)
         tp = round(entry_price - (TP_PIPS * PIP), 5)
 
@@ -89,13 +85,14 @@ def place_order(account_id, side, entry_price):
         print("Order error:", e)
     return None, None, None
 
-def close_position(account_id, ticket):
+def modify_sl(account_id, ticket, new_sl):
     try:
-        r = requests.delete(BASE + "/v1/accounts/" + account_id + "/positions/" + str(ticket),
-                            headers=make_headers(), timeout=30)
+        data = {"stopLoss": new_sl}
+        r = requests.patch(BASE + "/v1/accounts/" + account_id + "/positions/" + str(ticket),
+                           json=data, headers=make_headers(), timeout=30)
         return r.status_code in (200, 204)
     except Exception as e:
-        print("Close error:", e)
+        print("Modify SL error:", e)
     return False
 
 def get_signal():
@@ -126,30 +123,60 @@ def get_signal():
     if real_uptrend and e50 > e200 and rsi_prev < 45 and rsi_now > rsi_prev and rsi_now < 65:
         return "CALL", "Uptrend + RSI rising", price, rsi_now
 
-    return "NO TRADE", "No setup with trend (RSI " + str(round(rsi_now, 1)) + ")", price, rsi_now
+    return "NO TRADE", "No setup with trend", price, rsi_now
 
-print("MT5 Auto-Trade Bot v7 (trend + SL/TP) starting...")
-send_discord("MT5 Auto-Trade Bot v7 starting — with stop-loss + take-profit")
+print("MT5 Auto-Trade Bot v8 (Let Winners Run) starting...")
+send_discord("MT5 Auto-Trade Bot v8 starting — No more 15-min timer. Trailing SL active.")
 
 account_id = start_session()
 if not account_id:
-    send_discord("Could not connect to MT5. Check Railway variables.")
-    print("Fatal: no session")
+    send_discord("Could not connect to MT5.")
     exit()
 
 send_discord("Connected to MT5. Account: " + account_id)
-print("Connected. Account ID:", account_id)
 
 last_signal = None
 last_signal_time = 0
+open_ticket = None
+breakeven_set = False
 
 while True:
     try:
         account_id = start_session()
         if not account_id:
-            time.sleep(300)
+            time.sleep(60)
             continue
 
+        # If a trade is open, check its status
+        if open_ticket:
+            positions = get_open_positions(account_id)
+            trade_still_open = False
+            for p in positions:
+                if str(p.get("ticket")) == str(open_ticket):
+                    trade_still_open = True
+                    # Check for Trailing Stop (Breakeven)
+                    current_pnl_pips = float(p.get("profit", 0)) / (VOLUME * 100000) / PIP
+                    if current_pnl_pips >= BREAKEVEN_PIPS and not breakeven_set:
+                        current_price = float(p.get("currentPrice", 0))
+                        if modify_sl(account_id, open_ticket, current_price):
+                            send_discord(f"🛡️ Trade `{open_ticket}` moved to Breakeven (Risk-Free).")
+                            breakeven_set = True
+                    break
+
+            if not trade_still_open:
+                send_discord(f"✅ Position `{open_ticket}` closed (Hit SL or TP).")
+                print("Trade closed:", open_ticket)
+                open_ticket = None
+                breakeven_set = False
+                last_signal_time = time.time()
+                print("Waiting 15 min for next setup...")
+                time.sleep(900)
+            else:
+                # Trade is still open, wait 1 minute and check again
+                time.sleep(60)
+            continue
+
+        # If no trade is open, look for a signal
         signal, reason, price, rsi = get_signal()
         now = datetime.now(timezone(timedelta(hours=1))).strftime("%H:%M:%S")
         print("[" + now + "] " + signal + " | " + str(round(price, 5)) + " | RSI " + str(round(rsi, 2)))
@@ -157,37 +184,30 @@ while True:
         if signal != "NO TRADE":
             if signal == last_signal and (time.time() - last_signal_time) < 1200:
                 print("Duplicate skipped")
+                time.sleep(60)
             else:
                 side = "BUY" if signal == "CALL" else "SELL"
                 ticket, sl, tp = place_order(account_id, side, price)
 
                 if ticket:
+                    open_ticket = ticket
+                    breakeven_set = False
                     send_discord(
-                        "**MT5 AUTO-TRADE (v7)**\n" +
+                        "**🚀 MT5 AUTO-TRADE (v8)**\n" +
                         "**" + signal + "** `" + SYMBOL + "`\n" +
                         "Entry: `" + str(round(price, 5)) + "`\n" +
                         "SL: `" + str(sl) + "` (10 pips)\n" +
                         "TP: `" + str(tp) + "` (15 pips)\n" +
-                        "RSI: `" + str(round(rsi, 2)) + "`\n" +
                         "Ticket: `" + str(ticket) + "`\n" +
-                        "Reason: " + reason + "\n" +
-                        "Time: " + now
+                        "Letting winner run..."
                     )
                     last_signal = signal
-                    last_signal_time = time.time()
-                    print("Order:", side, "ticket", ticket, "SL", sl, "TP", tp)
-
-                    time.sleep(900)
-
-                    account_id = start_session()
-                    if account_id:
-                        close_position(account_id, ticket)
-                        send_discord("Position `" + str(ticket) + "` closed (or hit SL/TP).")
-                        print("Closed", ticket)
-                    continue
-
-        print("Waiting 15 min...")
-        time.sleep(900)
+                    time.sleep(60)
+                else:
+                    time.sleep(60)
+        else:
+            print("Waiting 15 min...")
+            time.sleep(900)
 
     except Exception as e:
         print("Loop error:", e)
