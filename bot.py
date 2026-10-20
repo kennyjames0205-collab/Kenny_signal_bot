@@ -51,8 +51,7 @@ def start_session():
 
 def get_open_positions(account_id):
     try:
-        r = requests.get(BASE + "/v1/accounts/" + account_id,
-                         headers=make_headers(), timeout=30)
+        r = requests.get(BASE + "/v1/accounts/" + account_id, headers=make_headers(), timeout=30)
         if r.status_code == 200:
             return r.json().get("positions", [])
     except Exception as e:
@@ -67,17 +66,9 @@ def place_order(account_id, side, entry_price):
         sl = round(entry_price + (SL_PIPS * PIP), 5)
         tp = round(entry_price - (TP_PIPS * PIP), 5)
 
-    data = {
-        "type": "market",
-        "symbol": SYMBOL,
-        "side": side,
-        "volume": VOLUME,
-        "stopLoss": sl,
-        "takeProfit": tp
-    }
+    data = {"type": "market", "symbol": SYMBOL, "side": side, "volume": VOLUME, "stopLoss": sl, "takeProfit": tp}
     try:
-        r = requests.post(BASE + "/v1/accounts/" + account_id + "/orders",
-                          json=data, headers=make_headers(), timeout=30)
+        r = requests.post(BASE + "/v1/accounts/" + account_id + "/orders", json=data, headers=make_headers(), timeout=30)
         if r.status_code in (200, 201):
             return r.json().get("ticket"), sl, tp
         print("Order fail:", r.status_code, r.json())
@@ -88,8 +79,7 @@ def place_order(account_id, side, entry_price):
 def modify_sl(account_id, ticket, new_sl):
     try:
         data = {"stopLoss": new_sl}
-        r = requests.patch(BASE + "/v1/accounts/" + account_id + "/positions/" + str(ticket),
-                           json=data, headers=make_headers(), timeout=30)
+        r = requests.patch(BASE + "/v1/accounts/" + account_id + "/positions/" + str(ticket), json=data, headers=make_headers(), timeout=30)
         return r.status_code in (200, 204)
     except Exception as e:
         print("Modify SL error:", e)
@@ -125,8 +115,8 @@ def get_signal():
 
     return "NO TRADE", "No setup with trend", price, rsi_now
 
-print("MT5 Auto-Trade Bot v8 (Let Winners Run) starting...")
-send_discord("MT5 Auto-Trade Bot v8 starting — No more 15-min timer. Trailing SL active.")
+print("MT5 Auto-Trade Bot v8.1 (Strict Lock) starting...")
+send_discord("MT5 Auto-Trade Bot v8.1 starting — 1 trade lock active.")
 
 account_id = start_session()
 if not account_id:
@@ -139,11 +129,18 @@ last_signal = None
 last_signal_time = 0
 open_ticket = None
 breakeven_set = False
+cooldown_until = 0
 
 while True:
     try:
         account_id = start_session()
         if not account_id:
+            time.sleep(60)
+            continue
+
+        # If we are in cooldown, just wait
+        if time.time() < cooldown_until:
+            print(f"Cooldown active for {int(cooldown_until - time.time())}s...")
             time.sleep(60)
             continue
 
@@ -154,12 +151,11 @@ while True:
             for p in positions:
                 if str(p.get("ticket")) == str(open_ticket):
                     trade_still_open = True
-                    # Check for Trailing Stop (Breakeven)
                     current_pnl_pips = float(p.get("profit", 0)) / (VOLUME * 100000) / PIP
                     if current_pnl_pips >= BREAKEVEN_PIPS and not breakeven_set:
                         current_price = float(p.get("currentPrice", 0))
                         if modify_sl(account_id, open_ticket, current_price):
-                            send_discord(f"🛡️ Trade `{open_ticket}` moved to Breakeven (Risk-Free).")
+                            send_discord(f"🛡️ Trade `{open_ticket}` moved to Breakeven.")
                             breakeven_set = True
                     break
 
@@ -169,10 +165,9 @@ while True:
                 open_ticket = None
                 breakeven_set = False
                 last_signal_time = time.time()
-                print("Waiting 15 min for next setup...")
-                time.sleep(900)
+                cooldown_until = time.time() + 900 # 15 min cooldown after a trade
+                print("Entering 15 min cooldown...")
             else:
-                # Trade is still open, wait 1 minute and check again
                 time.sleep(60)
             continue
 
@@ -193,11 +188,11 @@ while True:
                     open_ticket = ticket
                     breakeven_set = False
                     send_discord(
-                        "**🚀 MT5 AUTO-TRADE (v8)**\n" +
+                        "**🚀 MT5 AUTO-TRADE (v8.1)**\n" +
                         "**" + signal + "** `" + SYMBOL + "`\n" +
                         "Entry: `" + str(round(price, 5)) + "`\n" +
-                        "SL: `" + str(sl) + "` (10 pips)\n" +
-                        "TP: `" + str(tp) + "` (15 pips)\n" +
+                        "SL: `" + str(sl) + "`\n" +
+                        "TP: `" + str(tp) + "`\n" +
                         "Ticket: `" + str(ticket) + "`\n" +
                         "Letting winner run..."
                     )
