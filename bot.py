@@ -89,34 +89,46 @@ def get_signal():
     data = yf.download("EURUSD=X", interval="15m", period="5d", progress=False)
     if hasattr(data.columns, "get_level_values"):
         data.columns = data.columns.get_level_values(0)
+    
     data["rsi"] = ta.momentum.RSIIndicator(data["Close"], window=14).rsi()
+    data["ema20"] = ta.trend.EMAIndicator(data["Close"], window=20).ema_indicator()
     data["ema50"] = ta.trend.EMAIndicator(data["Close"], window=50).ema_indicator()
     data["ema200"] = ta.trend.EMAIndicator(data["Close"], window=200).ema_indicator()
 
     last = data.iloc[-1]
     prev = data.iloc[-2]
+    
     rsi_now = float(last["rsi"])
     rsi_prev = float(prev["rsi"])
+    close = float(last["Close"])
+    e20 = float(last["ema20"])
     e50 = float(last["ema50"])
     e200 = float(last["ema200"])
-    price = float(last["Close"])
 
-    real_uptrend = price > e200
-    real_downtrend = price < e200
+    # THE ULTIMATE FILTER: Trend + RSI + Price Action
+    # 1. Trend must be clear (EMA20 > EMA50 > EMA200 for buy, opposite for sell)
+    # 2. Price must be on the right side of the 50 EMA (Pullback confirmed)
+    # 3. RSI must be in the sweet spot and turning
 
-    if real_downtrend and rsi_now > 64 and rsi_now < rsi_prev:
-        return "PUT", "Downtrend + overbought drop", price, rsi_now
-    if real_downtrend and e50 < e200 and rsi_prev > 55 and rsi_now < rsi_prev and rsi_now > 35:
-        return "PUT", "Downtrend + RSI falling", price, rsi_now
-    if real_uptrend and rsi_now < 36 and rsi_now > rsi_prev:
-        return "CALL", "Uptrend + oversold bounce", price, rsi_now
-    if real_uptrend and e50 > e200 and rsi_prev < 45 and rsi_now > rsi_prev and rsi_now < 65:
-        return "CALL", "Uptrend + RSI rising", price, rsi_now
+    real_uptrend = close > e200
+    real_downtrend = close < e200
 
-    return "NO TRADE", "No setup with trend", price, rsi_now
+    # BUY SETUP
+    if real_uptrend:
+        # Price must pull back near EMA50 but stay above it, RSI rising from below 45
+        if close > e50 and rsi_prev < 45 and rsi_now > rsi_prev and rsi_now < 65:
+            return "CALL", f"Strong Uptrend Pullback (RSI {rsi_prev:.1f}->{rsi_now:.1f})", close, rsi_now
 
-print("MT5 Auto-Trade Bot v8.1 (Strict Lock) starting...")
-send_discord("MT5 Auto-Trade Bot v8.1 starting — 1 trade lock active.")
+    # SELL SETUP
+    if real_downtrend:
+        # Price must pull back near EMA50 but stay below it, RSI falling from above 55
+        if close < e50 and rsi_prev > 55 and rsi_now < rsi_prev and rsi_now > 35:
+            return "PUT", f"Strong Downtrend Pullback (RSI {rsi_prev:.1f}->{rsi_now:.1f})", close, rsi_now
+
+    return "NO TRADE", f"Waiting for perfect setup (RSI {rsi_now:.1f})", close, rsi_now
+
+print("MT5 Auto-Trade Bot v9 (Sniper Entry) starting...")
+send_discord("MT5 Auto-Trade Bot v9 starting — Sniper Mode (Price Action + Trend + RSI).")
 
 account_id = start_session()
 if not account_id:
@@ -138,13 +150,11 @@ while True:
             time.sleep(60)
             continue
 
-        # If we are in cooldown, just wait
         if time.time() < cooldown_until:
             print(f"Cooldown active for {int(cooldown_until - time.time())}s...")
             time.sleep(60)
             continue
 
-        # If a trade is open, check its status
         if open_ticket:
             positions = get_open_positions(account_id)
             trade_still_open = False
@@ -160,21 +170,20 @@ while True:
                     break
 
             if not trade_still_open:
-                send_discord(f"✅ Position `{open_ticket}` closed (Hit SL or TP).")
+                send_discord(f"✅ Position `{open_ticket}` closed.")
                 print("Trade closed:", open_ticket)
                 open_ticket = None
                 breakeven_set = False
                 last_signal_time = time.time()
-                cooldown_until = time.time() + 900 # 15 min cooldown after a trade
+                cooldown_until = time.time() + 900
                 print("Entering 15 min cooldown...")
             else:
                 time.sleep(60)
             continue
 
-        # If no trade is open, look for a signal
         signal, reason, price, rsi = get_signal()
         now = datetime.now(timezone(timedelta(hours=1))).strftime("%H:%M:%S")
-        print("[" + now + "] " + signal + " | " + str(round(price, 5)) + " | RSI " + str(round(rsi, 2)))
+        print("[" + now + "] " + signal + " | " + str(round(price, 5)) + " | RSI " + str(round(rsi, 2)) + " | " + reason)
 
         if signal != "NO TRADE":
             if signal == last_signal and (time.time() - last_signal_time) < 1200:
@@ -188,13 +197,13 @@ while True:
                     open_ticket = ticket
                     breakeven_set = False
                     send_discord(
-                        "**🚀 MT5 AUTO-TRADE (v8.1)**\n" +
+                        "**🎯 MT5 SNIPER TRADE (v9)**\n" +
                         "**" + signal + "** `" + SYMBOL + "`\n" +
                         "Entry: `" + str(round(price, 5)) + "`\n" +
                         "SL: `" + str(sl) + "`\n" +
                         "TP: `" + str(tp) + "`\n" +
                         "Ticket: `" + str(ticket) + "`\n" +
-                        "Letting winner run..."
+                        "Reason: " + reason
                     )
                     last_signal = signal
                     time.sleep(60)
