@@ -18,7 +18,7 @@ BASE = "https://api.tickerall.com"
 PIP = 0.0001
 SL_PIPS = 10
 TP_PIPS = 15
-BREAKEVEN_PIPS = 5
+TIME_LIMIT_MINUTES = 15
 
 def send_discord(msg):
     try:
@@ -33,18 +33,11 @@ def make_headers():
     }
 
 def start_session():
-    data = {
-        "broker": "mt5",
-        "server": MT5_SERVER,
-        "account": MT5_ACCOUNT,
-        "password": MT5_PASSWORD,
-        "terminalType": "MOBILE"
-    }
+    data = {"broker": "mt5", "server": MT5_SERVER, "account": MT5_ACCOUNT, "password": MT5_PASSWORD, "terminalType": "MOBILE"}
     try:
         r = requests.post(BASE + "/v1/sessions", json=data, headers=make_headers(), timeout=30)
         if r.status_code in (200, 201):
             return r.json().get("accountId")
-        print("Session fail:", r.status_code, r.json())
     except Exception as e:
         print("Session error:", e)
     return None
@@ -55,7 +48,7 @@ def get_open_positions(account_id):
         if r.status_code == 200:
             return r.json().get("positions", [])
     except Exception as e:
-        print("Fetch positions error:", e)
+        pass
     return []
 
 def place_order(account_id, side, entry_price):
@@ -70,78 +63,60 @@ def place_order(account_id, side, entry_price):
     try:
         r = requests.post(BASE + "/v1/accounts/" + account_id + "/orders", json=data, headers=make_headers(), timeout=30)
         if r.status_code in (200, 201):
-            return r.json().get("ticket"), sl, tp
-        print("Order fail:", r.status_code, r.json())
+            return r.json().get("ticket")
     except Exception as e:
-        print("Order error:", e)
-    return None, None, None
+        pass
+    return None
 
-def modify_sl(account_id, ticket, new_sl):
+def close_position(account_id, ticket):
     try:
-        data = {"stopLoss": new_sl}
-        r = requests.patch(BASE + "/v1/accounts/" + account_id + "/positions/" + str(ticket), json=data, headers=make_headers(), timeout=30)
+        r = requests.delete(BASE + "/v1/accounts/" + account_id + "/positions/" + str(ticket), headers=make_headers(), timeout=30)
         return r.status_code in (200, 204)
     except Exception as e:
-        print("Modify SL error:", e)
-    return False
+        return False
 
 def get_signal():
-    data = yf.download("EURUSD=X", interval="15m", period="5d", progress=False)
-    if hasattr(data.columns, "get_level_values"):
-        data.columns = data.columns.get_level_values(0)
-    
-    data["rsi"] = ta.momentum.RSIIndicator(data["Close"], window=14).rsi()
-    data["ema20"] = ta.trend.EMAIndicator(data["Close"], window=20).ema_indicator()
-    data["ema50"] = ta.trend.EMAIndicator(data["Close"], window=50).ema_indicator()
-    data["ema200"] = ta.trend.EMAIndicator(data["Close"], window=200).ema_indicator()
+    # Fetch H1 data for Trend
+    data_h1 = yf.download("EURUSD=X", interval="1h", period="1mo", progress=False)
+    if hasattr(data_h1.columns, "get_level_values"):
+        data_h1.columns = data_h1.columns.get_level_values(0)
+    data_h1["ema50"] = ta.trend.EMAIndicator(data_h1["Close"], window=50).ema_indicator()
+    data_h1["ema200"] = ta.trend.EMAIndicator(data_h1["Close"], window=200).ema_indicator()
+    h1_trend_up = float(data_h1["ema50"].iloc[-1]) > float(data_h1["ema200"].iloc[-1])
+    h1_trend_down = float(data_h1["ema50"].iloc[-1]) < float(data_h1["ema200"].iloc[-1])
 
-    last = data.iloc[-1]
-    prev = data.iloc[-2]
+    # Fetch M15 data for Entry
+    data_m15 = yf.download("EURUSD=X", interval="15m", period="5d", progress=False)
+    if hasattr(data_m15.columns, "get_level_values"):
+        data_m15.columns = data_m15.columns.get_level_values(0)
     
+    data_m15["rsi"] = ta.momentum.RSIIndicator(data_m15["Close"], window=14).rsi()
+    
+    last = data_m15.iloc[-1]
     rsi_now = float(last["rsi"])
-    rsi_prev = float(prev["rsi"])
     close = float(last["Close"])
-    e20 = float(last["ema20"])
-    e50 = float(last["ema50"])
-    e200 = float(last["ema200"])
 
-    # THE ULTIMATE FILTER: Trend + RSI + Price Action
-    # 1. Trend must be clear (EMA20 > EMA50 > EMA200 for buy, opposite for sell)
-    # 2. Price must be on the right side of the 50 EMA (Pullback confirmed)
-    # 3. RSI must be in the sweet spot and turning
+    # THE 70% LOGIC
+    # If H1 is UP, only buy when M15 RSI is below 40 (discount)
+    if h1_trend_up and rsi_now < 40:
+        return "CALL", f"H1 Uptrend + M15 Oversold (RSI {rsi_now:.1f})", close
+    
+    # If H1 is DOWN, only sell when M15 RSI is above 60 (premium)
+    if h1_trend_down and rsi_now > 60:
+        return "PUT", f"H1 Downtrend + M15 Overbought (RSI {rsi_now:.1f})", close
 
-    real_uptrend = close > e200
-    real_downtrend = close < e200
+    return "NO TRADE", f"Waiting for H1/M15 alignment (RSI {rsi_now:.1f})", close
 
-    # BUY SETUP
-    if real_uptrend:
-        # Price must pull back near EMA50 but stay above it, RSI rising from below 45
-        if close > e50 and rsi_prev < 45 and rsi_now > rsi_prev and rsi_now < 65:
-            return "CALL", f"Strong Uptrend Pullback (RSI {rsi_prev:.1f}->{rsi_now:.1f})", close, rsi_now
-
-    # SELL SETUP
-    if real_downtrend:
-        # Price must pull back near EMA50 but stay below it, RSI falling from above 55
-        if close < e50 and rsi_prev > 55 and rsi_now < rsi_prev and rsi_now > 35:
-            return "PUT", f"Strong Downtrend Pullback (RSI {rsi_prev:.1f}->{rsi_now:.1f})", close, rsi_now
-
-    return "NO TRADE", f"Waiting for perfect setup (RSI {rsi_now:.1f})", close, rsi_now
-
-print("MT5 Auto-Trade Bot v9 (Sniper Entry) starting...")
-send_discord("MT5 Auto-Trade Bot v9 starting — Sniper Mode (Price Action + Trend + RSI).")
+print("MT5 Bot v12 (70% Strike Rate Mode) starting...")
+send_discord("🚀 MT5 Bot v12 starting — H1 Trend + M15 Entry. Target: 70% Win Rate.")
 
 account_id = start_session()
 if not account_id:
-    send_discord("Could not connect to MT5.")
     exit()
 
-send_discord("Connected to MT5. Account: " + account_id)
-
-last_signal = None
-last_signal_time = 0
 open_ticket = None
-breakeven_set = False
-cooldown_until = 0
+trade_start_time = 0
+last_signal_time = 0
 
 while True:
     try:
@@ -150,70 +125,59 @@ while True:
             time.sleep(60)
             continue
 
-        if time.time() < cooldown_until:
-            print(f"Cooldown active for {int(cooldown_until - time.time())}s...")
+        # Manage open trade
+        if open_ticket:
+            positions = get_open_positions(account_id)
+            still_open = any(str(p.get("ticket")) == str(open_ticket) for p in positions)
+            
+            if not still_open:
+                send_discord(f"✅ Trade `{open_ticket}` closed (Hit SL/TP).")
+                open_ticket = None
+                last_signal_time = time.time()
+                time.sleep(60)
+                continue
+
+            # 15 Minute Time Limit
+            if time.time() - trade_start_time > (TIME_LIMIT_MINUTES * 60):
+                if close_position(account_id, open_ticket):
+                    send_discord(f"⏱️ Trade `{open_ticket}` closed by 15-min timer.")
+                    open_ticket = None
+                    last_signal_time = time.time()
+                time.sleep(60)
+                continue
+                
+            time.sleep(30)
+            continue
+
+        # Look for new trade
+        if time.time() - last_signal_time < 900: # 15 min cooldown between trades
             time.sleep(60)
             continue
 
-        if open_ticket:
-            positions = get_open_positions(account_id)
-            trade_still_open = False
-            for p in positions:
-                if str(p.get("ticket")) == str(open_ticket):
-                    trade_still_open = True
-                    current_pnl_pips = float(p.get("profit", 0)) / (VOLUME * 100000) / PIP
-                    if current_pnl_pips >= BREAKEVEN_PIPS and not breakeven_set:
-                        current_price = float(p.get("currentPrice", 0))
-                        if modify_sl(account_id, open_ticket, current_price):
-                            send_discord(f"🛡️ Trade `{open_ticket}` moved to Breakeven.")
-                            breakeven_set = True
-                    break
-
-            if not trade_still_open:
-                send_discord(f"✅ Position `{open_ticket}` closed.")
-                print("Trade closed:", open_ticket)
-                open_ticket = None
-                breakeven_set = False
-                last_signal_time = time.time()
-                cooldown_until = time.time() + 900
-                print("Entering 15 min cooldown...")
-            else:
-                time.sleep(60)
-            continue
-
-        signal, reason, price, rsi = get_signal()
+        signal, reason, price = get_signal()
         now = datetime.now(timezone(timedelta(hours=1))).strftime("%H:%M:%S")
-        print("[" + now + "] " + signal + " | " + str(round(price, 5)) + " | RSI " + str(round(rsi, 2)) + " | " + reason)
+        print(f"[{now}] {signal} | {price:.5f} | {reason}")
 
         if signal != "NO TRADE":
-            if signal == last_signal and (time.time() - last_signal_time) < 1200:
-                print("Duplicate skipped")
+            side = "BUY" if signal == "CALL" else "SELL"
+            ticket = place_order(account_id, side, price)
+
+            if ticket:
+                open_ticket = ticket
+                trade_start_time = time.time()
+                send_discord(
+                    f"**🚀 MT5 TRADE (v12)**\n" +
+                    f"**{signal}** `{SYMBOL}`\n" +
+                    f"Entry: `{price:.5f}`\n" +
+                    f"Ticket: `{ticket}`\n" +
+                    f"Reason: {reason}"
+                )
                 time.sleep(60)
             else:
-                side = "BUY" if signal == "CALL" else "SELL"
-                ticket, sl, tp = place_order(account_id, side, price)
-
-                if ticket:
-                    open_ticket = ticket
-                    breakeven_set = False
-                    send_discord(
-                        "**🎯 MT5 SNIPER TRADE (v9)**\n" +
-                        "**" + signal + "** `" + SYMBOL + "`\n" +
-                        "Entry: `" + str(round(price, 5)) + "`\n" +
-                        "SL: `" + str(sl) + "`\n" +
-                        "TP: `" + str(tp) + "`\n" +
-                        "Ticket: `" + str(ticket) + "`\n" +
-                        "Reason: " + reason
-                    )
-                    last_signal = signal
-                    time.sleep(60)
-                else:
-                    time.sleep(60)
+                time.sleep(60)
         else:
-            print("Waiting 15 min...")
-            time.sleep(900)
+            time.sleep(300) # Check every 5 mins
 
     except Exception as e:
-        print("Loop error:", e)
-        send_discord("Bot error: " + str(e))
+        print("Error:", e)
         time.sleep(60)
