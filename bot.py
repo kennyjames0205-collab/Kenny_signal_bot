@@ -1,3 +1,4 @@
+
 import os
 import time
 import requests
@@ -16,20 +17,17 @@ VOLUME = 0.01
 BASE = "https://api.tickerall.com"
 
 PIP = 0.0001
-SL_PIPS = 5    # Tiny loss ($0.50)
-TP_PIPS = 5    # Quick win ($0.50)
+SL_PIPS = 5
+TP_PIPS = 5
 
 def send_discord(msg):
     try:
         requests.post(DISCORD_WEBHOOK, json={"content": msg}, timeout=10)
-    except Exception as e:
+    except Exception:
         pass
 
 def make_headers():
-    return {
-        "Authorization": "Bearer " + API_KEY,
-        "Idempotency-Key": "idem-" + str(time.time())
-    }
+    return {"Authorization": "Bearer " + API_KEY, "Idempotency-Key": "idem-" + str(time.time())}
 
 def start_session():
     data = {"broker": "mt5", "server": MT5_SERVER, "account": MT5_ACCOUNT, "password": MT5_PASSWORD, "terminalType": "MOBILE"}
@@ -37,7 +35,7 @@ def start_session():
         r = requests.post(BASE + "/v1/sessions", json=data, headers=make_headers(), timeout=15)
         if r.status_code in (200, 201):
             return r.json().get("accountId")
-    except Exception as e:
+    except Exception:
         pass
     return None
 
@@ -46,7 +44,7 @@ def get_open_positions(account_id):
         r = requests.get(BASE + "/v1/accounts/" + account_id, headers=make_headers(), timeout=15)
         if r.status_code == 200:
             return r.json().get("positions", [])
-    except Exception as e:
+    except Exception:
         pass
     return []
 
@@ -63,12 +61,11 @@ def place_order(account_id, side, entry_price):
         r = requests.post(BASE + "/v1/accounts/" + account_id + "/orders", json=data, headers=make_headers(), timeout=15)
         if r.status_code in (200, 201):
             return r.json().get("ticket"), sl, tp
-    except Exception as e:
+    except Exception:
         pass
     return None, None, None
 
 def get_signal():
-    # 5-Minute Chart for Scalping
     data = yf.download("EURUSD=X", interval="5m", period="1d", progress=False)
     if hasattr(data.columns, "get_level_values"):
         data.columns = data.columns.get_level_values(0)
@@ -86,7 +83,6 @@ def get_signal():
     prev_e9 = float(prev["ema9"])
     prev_e21 = float(prev["ema21"])
 
-    # Scalping Logic: EMA Crossover + RSI Momentum
     if prev_e9 < prev_e21 and e9 > e21 and rsi_now > 50:
         return "CALL", f"Bullish Crossover (RSI {rsi_now:.1f})", close
     if prev_e9 > prev_e21 and e9 < e21 and rsi_now < 50:
@@ -94,15 +90,15 @@ def get_signal():
 
     return "NO TRADE", f"Waiting for cross (RSI {rsi_now:.1f})", close
 
-print("MT5 Bot v14 (Micro-Scalper) starting...")
-send_discord("⚡ MT5 Bot v14 starting — Scalping Mode.")
+print("MT5 Bot v15 (Hard Lock) starting...")
+send_discord("🛡️ MT5 Bot v15 starting — Hard Lock Active. Max 1 trade.")
 
 account_id = start_session()
 if not account_id:
     exit()
 
-open_ticket = None
 last_signal_time = 0
+hard_lock_until = 0  # <--- THIS IS THE FIX
 
 while True:
     try:
@@ -111,21 +107,20 @@ while True:
             time.sleep(60)
             continue
 
-        if open_ticket:
-            positions = get_open_positions(account_id)
-            still_open = any(str(p.get("ticket")) == str(open_ticket) for p in positions)
-            if not still_open:
-                send_discord(f"✅ Trade `{open_ticket}` closed.")
-                open_ticket = None
-                last_signal_time = time.time()
-            time.sleep(30)
+        # 1. THE HARD LOCK CHECK
+        if time.time() < hard_lock_until:
+            print(f"🛡️ Hard Lock active. Sleeping for {int(hard_lock_until - time.time())} seconds...")
+            time.sleep(60)
             continue
 
-        # Short cooldown (5 mins) to allow more trades
-        if time.time() - last_signal_time < 300:
-            time.sleep(30)
+        # 2. CHECK IF A TRADE IS ALREADY OPEN
+        positions = get_open_positions(account_id)
+        if len(positions) > 0:
+            print("Trade already open on MT5. Waiting...")
+            time.sleep(60)
             continue
 
+        # 3. LOOK FOR A SIGNAL
         signal, reason, price = get_signal()
         now = datetime.now(timezone(timedelta(hours=1))).strftime("%H:%M:%S")
         print(f"[{now}] {signal} | {price:.5f} | {reason}")
@@ -135,16 +130,16 @@ while True:
             ticket, sl, tp = place_order(account_id, side, price)
 
             if ticket:
-                open_ticket = ticket
+                # 4. ENGAGE HARD LOCK (5 minutes)
+                hard_lock_until = time.time() + 300 
                 send_discord(
-                    f"**⚡ MT5 SCALP TRADE (v14)**\n" +
+                    f"**⚡ MT5 SCALP TRADE (v15)**\n" +
                     f"**{signal}** `{SYMBOL}`\n" +
                     f"Entry: `{price:.5f}`\n" +
-                    f"SL: `{sl}`\n" +
-                    f"TP: `{tp}`\n" +
-                    f"Ticket: `{ticket}`"
+                    f"Ticket: `{ticket}`\n" +
+                    f"🛡️ Hard Lock: 5 minutes"
                 )
-                time.sleep(30)
+                time.sleep(60)
         else:
             time.sleep(60)
 
