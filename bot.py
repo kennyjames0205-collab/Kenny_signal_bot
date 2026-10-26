@@ -1,4 +1,3 @@
-
 import os
 import time
 import requests
@@ -17,8 +16,8 @@ VOLUME = 0.01
 BASE = "https://api.tickerall.com"
 
 PIP = 0.0001
-SL_PIPS = 5
-TP_PIPS = 5
+SL_PIPS = 5     # Tiny loss ($0.50)
+TP_PIPS = 10    # Good win ($1.00)
 
 def send_discord(msg):
     try:
@@ -66,39 +65,32 @@ def place_order(account_id, side, entry_price):
     return None, None, None
 
 def get_signal():
-    data = yf.download("EURUSD=X", interval="5m", period="1d", progress=False)
+    data = yf.download("EURUSD=X", interval="1m", period="1d", progress=False)
     if hasattr(data.columns, "get_level_values"):
         data.columns = data.columns.get_level_values(0)
     
-    data["rsi"] = ta.momentum.RSIIndicator(data["Close"], window=14).rsi()
     data["ema9"] = ta.trend.EMAIndicator(data["Close"], window=9).ema_indicator()
     data["ema21"] = ta.trend.EMAIndicator(data["Close"], window=21).ema_indicator()
     
     last = data.iloc[-1]
-    prev = data.iloc[-2]
-    rsi_now = float(last["rsi"])
     close = float(last["Close"])
     e9 = float(last["ema9"])
     e21 = float(last["ema21"])
-    prev_e9 = float(prev["ema9"])
-    prev_e21 = float(prev["ema21"])
 
-    if prev_e9 < prev_e21 and e9 > e21 and rsi_now > 50:
-        return "CALL", f"Bullish Crossover (RSI {rsi_now:.1f})", close
-    if prev_e9 > prev_e21 and e9 < e21 and rsi_now < 50:
-        return "PUT", f"Bearish Crossover (RSI {rsi_now:.1f})", close
+    # PURE MOMENTUM: No RSI filter.
+    if e9 > e21:
+        return "CALL", "Momentum BUY", close
+    if e9 < e21:
+        return "PUT", "Momentum SELL", close
 
-    return "NO TRADE", f"Waiting for cross (RSI {rsi_now:.1f})", close
+    return "NO TRADE", "Flat", close
 
-print("MT5 Bot v15 (Hard Lock) starting...")
-send_discord("🛡️ MT5 Bot v15 starting — Hard Lock Active. Max 1 trade.")
+print("MT5 Bot v16 (Pure Action) starting...")
+send_discord("🚀 MT5 Bot v16 starting — Pure Action Mode. 3 Trades allowed.")
 
 account_id = start_session()
 if not account_id:
     exit()
-
-last_signal_time = 0
-hard_lock_until = 0  # <--- THIS IS THE FIX
 
 while True:
     try:
@@ -107,41 +99,30 @@ while True:
             time.sleep(60)
             continue
 
-        # 1. THE HARD LOCK CHECK
-        if time.time() < hard_lock_until:
-            print(f"🛡️ Hard Lock active. Sleeping for {int(hard_lock_until - time.time())} seconds...")
-            time.sleep(60)
-            continue
-
-        # 2. CHECK IF A TRADE IS ALREADY OPEN
+        # Allow up to 3 trades at the same time
         positions = get_open_positions(account_id)
-        if len(positions) > 0:
-            print("Trade already open on MT5. Waiting...")
-            time.sleep(60)
+        if len(positions) >= 3:
+            print(f"Max 3 trades open. Waiting...")
+            time.sleep(30)
             continue
 
-        # 3. LOOK FOR A SIGNAL
         signal, reason, price = get_signal()
         now = datetime.now(timezone(timedelta(hours=1))).strftime("%H:%M:%S")
-        print(f"[{now}] {signal} | {price:.5f} | {reason}")
-
+        
         if signal != "NO TRADE":
             side = "BUY" if signal == "CALL" else "SELL"
             ticket, sl, tp = place_order(account_id, side, price)
 
             if ticket:
-                # 4. ENGAGE HARD LOCK (5 minutes)
-                hard_lock_until = time.time() + 300 
                 send_discord(
-                    f"**⚡ MT5 SCALP TRADE (v15)**\n" +
+                    f"**⚡ MT5 ACTION TRADE (v16)**\n" +
                     f"**{signal}** `{SYMBOL}`\n" +
                     f"Entry: `{price:.5f}`\n" +
-                    f"Ticket: `{ticket}`\n" +
-                    f"🛡️ Hard Lock: 5 minutes"
+                    f"Ticket: `{ticket}`"
                 )
-                time.sleep(60)
+                time.sleep(30)
         else:
-            time.sleep(60)
+            time.sleep(30)
 
     except Exception as e:
         print("Error:", e)
