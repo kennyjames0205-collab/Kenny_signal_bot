@@ -38,15 +38,6 @@ def start_session():
         pass
     return None
 
-def get_open_positions(account_id):
-    try:
-        r = requests.get(BASE + "/v1/accounts/" + account_id, headers=make_headers(), timeout=15)
-        if r.status_code == 200:
-            return r.json().get("positions", [])
-    except Exception:
-        pass
-    return []
-
 def place_order(account_id, side, entry_price):
     if side == "BUY":
         sl = round(entry_price - (SL_PIPS * PIP), 5)
@@ -60,8 +51,10 @@ def place_order(account_id, side, entry_price):
         r = requests.post(BASE + "/v1/accounts/" + account_id + "/orders", json=data, headers=make_headers(), timeout=15)
         if r.status_code in (200, 201):
             return r.json().get("ticket"), sl, tp
-    except Exception:
-        pass
+        else:
+            print("Order failed:", r.status_code, r.text)
+    except Exception as e:
+        print("Order error:", e)
     return None, None, None
 
 def calculate_ema(prices, period):
@@ -80,7 +73,6 @@ def get_signal():
             return "NO TRADE", "API Limit or Error", 0
             
         closes = [float(candle["close"]) for candle in reversed(data["values"])]
-        
         e9 = calculate_ema(closes, 9)
         e21 = calculate_ema(closes, 21)
         close = closes[-1]
@@ -89,18 +81,18 @@ def get_signal():
             return "CALL", f"Momentum BUY", close
         if e9 < e21:
             return "PUT", f"Momentum SELL", close
-            
     except Exception as e:
-        print("Fetch error:", e)
-        return "NO TRADE", "Network Error", 0
+        return "NO TRADE", f"Network Error: {e}", 0
 
-print("MT5 Bot v19.2 (Ghost Buster) starting...")
-send_discord("🪶 MT5 Bot v19.2 starting — Max 5 trades.")
+print("MT5 Bot v20 (No Ghosts) starting...")
+send_discord("🪶 MT5 Bot v20 starting — Ghost check removed.")
 
 account_id = start_session()
 if not account_id:
     print("Failed to start session.")
     exit()
+
+last_trade_time = 0
 
 while True:
     try:
@@ -109,11 +101,9 @@ while True:
             time.sleep(60)
             continue
 
-        positions = get_open_positions(account_id)
-        
-        # ALLOW UP TO 5 TRADES (To ignore the 2 ghost trades)
-        if len(positions) >= 5:
-            print("Max 5 trades open. Waiting 60 seconds...")
+        # Ignore API ghost trades completely. Just wait 5 minutes between trades.
+        if time.time() - last_trade_time < 300:
+            print("Cooldown active. Waiting 60 seconds...")
             time.sleep(60)
             continue
 
@@ -126,7 +116,8 @@ while True:
             ticket, sl, tp = place_order(account_id, side, price)
             if ticket:
                 send_discord(f"⚡ **Action Trade**\n**{signal}** `{SYMBOL}`\nEntry: `{price:.5f}`\nTicket: `{ticket}`")
-                time.sleep(300) # 5 min cooldown
+                last_trade_time = time.time()
+                time.sleep(60)
         else:
             time.sleep(60)
 
