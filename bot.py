@@ -1,7 +1,6 @@
 import os
 import time
 import requests
-import ta
 from datetime import datetime, timezone, timedelta
 
 TICKERALL_KEY = os.environ.get("TICKERALL_API_KEY")
@@ -65,6 +64,14 @@ def place_order(account_id, side, entry_price):
         pass
     return None, None, None
 
+def calculate_ema(prices, period):
+    # Pure Python EMA calculation (No pandas)
+    multiplier = 2 / (period + 1)
+    ema = sum(prices[:period]) / period
+    for price in prices[period:]:
+        ema = (price - ema) * multiplier + ema
+    return ema
+
 def get_signal():
     url = f"https://api.twelvedata.com/time_series?symbol=EUR/USD&interval=1min&outputsize=30&apikey={TWELVEDATA_KEY}"
     try:
@@ -75,11 +82,8 @@ def get_signal():
             
         closes = [float(candle["close"]) for candle in reversed(data["values"])]
         
-        e9_list = ta.trend.EMAIndicator(closes, window=9).ema_indicator()
-        e21_list = ta.trend.EMAIndicator(closes, window=21).ema_indicator()
-        
-        e9 = e9_list[-1]
-        e21 = e21_list[-1]
+        e9 = calculate_ema(closes, 9)
+        e21 = calculate_ema(closes, 21)
         close = closes[-1]
         
         if e9 > e21:
@@ -91,8 +95,8 @@ def get_signal():
         print("Fetch error:", e)
         return "NO TRADE", "Network Error", 0
 
-print("MT5 Bot v18 (Lightweight) starting...")
-send_discord("🪶 MT5 Bot v18 starting — Lightweight Mode. Max 2 trades.")
+print("MT5 Bot v19 (Pure Python) starting...")
+send_discord("🪶 MT5 Bot v19 starting — No Pandas. Max 2 trades.")
 
 account_id = start_session()
 if not account_id:
