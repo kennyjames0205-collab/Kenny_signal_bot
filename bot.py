@@ -65,7 +65,6 @@ def place_order(account_id, side, entry_price):
     return None, None, None
 
 def calculate_ema(prices, period):
-    # Pure Python EMA calculation (No pandas)
     multiplier = 2 / (period + 1)
     ema = sum(prices[:period]) / period
     for price in prices[period:]:
@@ -95,8 +94,8 @@ def get_signal():
         print("Fetch error:", e)
         return "NO TRADE", "Network Error", 0
 
-print("MT5 Bot v19 (Pure Python) starting...")
-send_discord("🪶 MT5 Bot v19 starting — No Pandas. Max 2 trades.")
+print("MT5 Bot v19.1 (No Spam) starting...")
+send_discord("🪶 MT5 Bot v19.1 starting — No Spam. Max 2 trades.")
 
 account_id = start_session()
 if not account_id:
@@ -111,10 +110,13 @@ while True:
             continue
 
         positions = get_open_positions(account_id)
+        
+        # --- THE FIX: Added time.sleep here ---
         if len(positions) >= 2:
-            print("Max trades open. Waiting...")
+            print("Max trades open. Waiting 60 seconds...")
             time.sleep(60)
             continue
+        # --------------------------------------
 
         signal, reason, price = get_signal()
         now = datetime.now(timezone(timedelta(hours=1))).strftime("%H:%M:%S")
