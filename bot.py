@@ -94,8 +94,8 @@ def get_signal():
         print("Fetch error:", e)
         return "NO TRADE", "Network Error", 0
 
-print("MT5 Bot v19.1 (No Spam) starting...")
-send_discord("🪶 MT5 Bot v19.1 starting — No Spam. Max 2 trades.")
+print("MT5 Bot v19.2 (Ghost Buster) starting...")
+send_discord("🪶 MT5 Bot v19.2 starting — Max 5 trades.")
 
 account_id = start_session()
 if not account_id:
@@ -111,12 +111,11 @@ while True:
 
         positions = get_open_positions(account_id)
         
-        # --- THE FIX: Added time.sleep here ---
-        if len(positions) >= 2:
-            print("Max trades open. Waiting 60 seconds...")
+        # ALLOW UP TO 5 TRADES (To ignore the 2 ghost trades)
+        if len(positions) >= 5:
+            print("Max 5 trades open. Waiting 60 seconds...")
             time.sleep(60)
             continue
-        # --------------------------------------
 
         signal, reason, price = get_signal()
         now = datetime.now(timezone(timedelta(hours=1))).strftime("%H:%M:%S")
@@ -127,7 +126,7 @@ while True:
             ticket, sl, tp = place_order(account_id, side, price)
             if ticket:
                 send_discord(f"⚡ **Action Trade**\n**{signal}** `{SYMBOL}`\nEntry: `{price:.5f}`\nTicket: `{ticket}`")
-                time.sleep(300)
+                time.sleep(300) # 5 min cooldown
         else:
             time.sleep(60)
 
