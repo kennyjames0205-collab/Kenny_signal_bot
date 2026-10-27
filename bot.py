@@ -1,23 +1,24 @@
 import os
 import time
 import requests
-import yfinance as yf
 import ta
 from datetime import datetime, timezone, timedelta
 
-API_KEY = os.environ.get("TICKERALL_API_KEY")
+TICKERALL_KEY = os.environ.get("TICKERALL_API_KEY")
 MT5_ACCOUNT = int(os.environ.get("MT5_ACCOUNT", "0"))
 MT5_SERVER = os.environ.get("MT5_SERVER")
 MT5_PASSWORD = os.environ.get("MT5_PASSWORD")
 DISCORD_WEBHOOK = os.environ.get("WEBHOOK")
+
+TWELVEDATA_KEY = "ab9054239e1c440f82ae43d470fc80dc"
 
 SYMBOL = "EURUSDm"
 VOLUME = 0.01
 BASE = "https://api.tickerall.com"
 
 PIP = 0.0001
-SL_PIPS = 5     # Tiny loss ($0.50)
-TP_PIPS = 10    # Good win ($1.00)
+SL_PIPS = 5
+TP_PIPS = 10
 
 def send_discord(msg):
     try:
@@ -26,7 +27,7 @@ def send_discord(msg):
         pass
 
 def make_headers():
-    return {"Authorization": "Bearer " + API_KEY, "Idempotency-Key": "idem-" + str(time.time())}
+    return {"Authorization": "Bearer " + TICKERALL_KEY, "Idempotency-Key": "idem-" + str(time.time())}
 
 def start_session():
     data = {"broker": "mt5", "server": MT5_SERVER, "account": MT5_ACCOUNT, "password": MT5_PASSWORD, "terminalType": "MOBILE"}
@@ -65,31 +66,37 @@ def place_order(account_id, side, entry_price):
     return None, None, None
 
 def get_signal():
-    data = yf.download("EURUSD=X", interval="1m", period="1d", progress=False)
-    if hasattr(data.columns, "get_level_values"):
-        data.columns = data.columns.get_level_values(0)
-    
-    data["ema9"] = ta.trend.EMAIndicator(data["Close"], window=9).ema_indicator()
-    data["ema21"] = ta.trend.EMAIndicator(data["Close"], window=21).ema_indicator()
-    
-    last = data.iloc[-1]
-    close = float(last["Close"])
-    e9 = float(last["ema9"])
-    e21 = float(last["ema21"])
+    url = f"https://api.twelvedata.com/time_series?symbol=EUR/USD&interval=1min&outputsize=30&apikey={TWELVEDATA_KEY}"
+    try:
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        if "values" not in data:
+            return "NO TRADE", "API Limit or Error", 0
+            
+        closes = [float(candle["close"]) for candle in reversed(data["values"])]
+        
+        e9_list = ta.trend.EMAIndicator(closes, window=9).ema_indicator()
+        e21_list = ta.trend.EMAIndicator(closes, window=21).ema_indicator()
+        
+        e9 = e9_list[-1]
+        e21 = e21_list[-1]
+        close = closes[-1]
+        
+        if e9 > e21:
+            return "CALL", f"Momentum BUY", close
+        if e9 < e21:
+            return "PUT", f"Momentum SELL", close
+            
+    except Exception as e:
+        print("Fetch error:", e)
+        return "NO TRADE", "Network Error", 0
 
-    # PURE MOMENTUM: No RSI filter.
-    if e9 > e21:
-        return "CALL", "Momentum BUY", close
-    if e9 < e21:
-        return "PUT", "Momentum SELL", close
-
-    return "NO TRADE", "Flat", close
-
-print("MT5 Bot v16 (Pure Action) starting...")
-send_discord("🚀 MT5 Bot v16 starting — Pure Action Mode. 3 Trades allowed.")
+print("MT5 Bot v18 (Lightweight) starting...")
+send_discord("🪶 MT5 Bot v18 starting — Lightweight Mode. Max 2 trades.")
 
 account_id = start_session()
 if not account_id:
+    print("Failed to start session.")
     exit()
 
 while True:
@@ -99,30 +106,24 @@ while True:
             time.sleep(60)
             continue
 
-        # Allow up to 3 trades at the same time
         positions = get_open_positions(account_id)
-        if len(positions) >= 3:
-            print(f"Max 3 trades open. Waiting...")
-            time.sleep(30)
+        if len(positions) >= 2:
+            print("Max trades open. Waiting...")
+            time.sleep(60)
             continue
 
         signal, reason, price = get_signal()
         now = datetime.now(timezone(timedelta(hours=1))).strftime("%H:%M:%S")
-        
-        if signal != "NO TRADE":
+        print(f"[{now}] {signal} | {reason} | Price: {price}")
+
+        if signal != "NO TRADE" and price > 0:
             side = "BUY" if signal == "CALL" else "SELL"
             ticket, sl, tp = place_order(account_id, side, price)
-
             if ticket:
-                send_discord(
-                    f"**⚡ MT5 ACTION TRADE (v16)**\n" +
-                    f"**{signal}** `{SYMBOL}`\n" +
-                    f"Entry: `{price:.5f}`\n" +
-                    f"Ticket: `{ticket}`"
-                )
-                time.sleep(30)
+                send_discord(f"⚡ **Action Trade**\n**{signal}** `{SYMBOL}`\nEntry: `{price:.5f}`\nTicket: `{ticket}`")
+                time.sleep(300)
         else:
-            time.sleep(30)
+            time.sleep(60)
 
     except Exception as e:
         print("Error:", e)
