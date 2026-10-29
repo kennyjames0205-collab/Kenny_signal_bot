@@ -1,3 +1,4 @@
+
 import os
 import time
 import requests
@@ -84,8 +85,8 @@ def get_signal():
     except Exception as e:
         return "NO TRADE", f"Network Error: {e}", 0
 
-print("MT5 Bot v20 (No Ghosts) starting...")
-send_discord("🪶 MT5 Bot v20 starting — Ghost check removed.")
+print("MT5 Bot v21 (Session Filter) starting...")
+send_discord("🪶 MT5 Bot v21 starting — Session Filter Active (8 AM - 5 PM).")
 
 account_id = start_session()
 if not account_id:
@@ -101,14 +102,23 @@ while True:
             time.sleep(60)
             continue
 
-        # Ignore API ghost trades completely. Just wait 5 minutes between trades.
+        # --- SESSION FILTER (8:00 AM to 5:00 PM UTC+1) ---
+        now_utc1 = datetime.now(timezone(timedelta(hours=1)))
+        current_hour = now_utc1.hour
+        
+        if current_hour < 8 or current_hour >= 17:
+            print(f"[{current_hour}:00] Outside trading hours. Sleeping...")
+            time.sleep(300) # Check every 5 minutes until market opens
+            continue
+        # -------------------------------------------------
+
         if time.time() - last_trade_time < 300:
             print("Cooldown active. Waiting 60 seconds...")
             time.sleep(60)
             continue
 
         signal, reason, price = get_signal()
-        now = datetime.now(timezone(timedelta(hours=1))).strftime("%H:%M:%S")
+        now = now_utc1.strftime("%H:%M:%S")
         print(f"[{now}] {signal} | {reason} | Price: {price}")
 
         if signal != "NO TRADE" and price > 0:
