@@ -77,12 +77,15 @@ def calculate_ema(prices, period):
     return ema
 
 def get_signal():
-    # OPTIMIZED: 1min interval, outputsize=10 to save API credits
-    url = f"https://api.twelvedata.com/time_series?symbol={SYMBOL}&interval=1min&outputsize=10&apikey={TWELVEDATA_KEY}"
+    # UPDATED: outputsize=5 to stay safely under the 8 credits/minute limit
+    url = f"https://api.twelvedata.com/time_series?symbol={SYMBOL}&interval=1min&outputsize=5&apikey={TWELVEDATA_KEY}"
     try:
         r = requests.get(url, timeout=10)
         data = r.json()
+        
+        # If TwelveData gives an error, print it so we can see it
         if "values" not in data:
+            print(f"🚨 TWELVEDATA RAW ERROR: {data}")
             return "NO TRADE", "API Limit or Error", None
         
         prices = [float(v["close"]) for v in data["values"]][::-1]
