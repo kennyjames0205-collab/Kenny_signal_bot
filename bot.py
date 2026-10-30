@@ -20,6 +20,7 @@ VOLUME = 0.01
 PIP = 0.0001
 SL_PIPS = 5
 TP_PIPS = 10
+RESISTANCE_BUFFER = 0.00020 # 2 pips
 
 def send_discord(msg):
     if not DISCORD_WEBHOOK:
@@ -77,6 +78,7 @@ def calculate_ema(prices, period):
     return ema
 
 def get_signal():
+    # We need 30 candles to calculate EMA 21 and look for recent highs/lows
     url = f"https://api.twelvedata.com/time_series?symbol=EUR/USD&interval=1min&outputsize=30&apikey={TWELVEDATA_KEY}"
     try:
         r = requests.get(url, timeout=10)
@@ -86,16 +88,34 @@ def get_signal():
             print(f"🚨 TWELVEDATA RAW ERROR: {data}")
             return "NO TRADE", "API Limit or Error", None
         
-        prices = [float(v["close"]) for v in data["values"]][::-1]
+        # We extract both close prices (for EMA) and high/low prices (for Support/Resistance)
+        closes = [float(v["close"]) for v in data["values"]][::-1]
+        highs = [float(v["high"]) for v in data["values"]][::-1]
+        lows = [float(v["low"]) for v in data["values"]][::-1]
         
-        ema_fast = calculate_ema(prices, 9)
-        ema_slow = calculate_ema(prices, 21)
+        ema_fast = calculate_ema(closes, 9)
+        ema_slow = calculate_ema(closes, 21)
         
-        current_price = prices[-1]
+        current_price = closes[-1]
         
+        # Find the highest and lowest price of the last 20 candles
+        recent_high = max(highs[-20:])
+        recent_low = min(lows[-20:])
+
+        # --- V23 RESISTANCE & SUPPORT LOGIC ---
+        
+        # 1. BUY Signal (EMA cross UP)
         if ema_fast > ema_slow:
+            # Check if we are too close to the ceiling (Resistance)
+            if current_price >= (recent_high - RESISTANCE_BUFFER):
+                return "NO TRADE", "Blocked: Too close to Resistance", current_price
             return "CALL", "Momentum BUY", current_price
+            
+        # 2. SELL Signal (EMA cross DOWN)
         elif ema_fast < ema_slow:
+            # Check if we are too close to the floor (Support)
+            if current_price <= (recent_low + RESISTANCE_BUFFER):
+                return "NO TRADE", "Blocked: Too close to Support", current_price
             return "PUT", "Momentum SELL", current_price
             
         return "NO TRADE", "No EMA Cross", None
@@ -104,7 +124,7 @@ def get_signal():
 
 # --- MAIN LOOP ---
 def main():
-    print("Starting Kenny Signal Bot v22...")
+    print("Starting Kenny Signal Bot v23...")
     account_id = None
     last_trade_time = 0
     
@@ -117,7 +137,7 @@ def main():
                     time.sleep(10)
                     continue
 
-            # --- V22 SESSION & LONDON FAKEOUT FILTER ---
+            # --- SESSION & LONDON FAKEOUT FILTER ---
             now_utc = datetime.now(timezone.utc)
             current_hour = now_utc.hour
             current_minute = now_utc.minute
@@ -133,8 +153,7 @@ def main():
                 print(f"[{current_hour:02d}:{current_minute:02d}] LONDON FAKEOUT TRAP. Bot paused.")
                 time.sleep(60)
                 continue
-            # -------------------------------------------
-
+            
             # 3. Cooldown (Wait at least 15 minutes between trades)
             if time.time() - last_trade_time < 900:
                 print("Cooldown active (15 mins). Waiting 60 seconds...")
