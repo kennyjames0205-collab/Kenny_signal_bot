@@ -11,7 +11,7 @@ MT5_SERVER = os.environ.get("MT5_SERVER")
 MT5_PASSWORD = os.environ.get("MT5_PASSWORD")
 DISCORD_WEBHOOK = os.environ.get("WEBHOOK_URL")
 
-# Full TwelveData Key inserted here
+# Full TwelveData Key
 TWELVEDATA_KEY = "ab9054239e1c440f82ae43d470fc80dc"
 
 SYMBOL = "EURUSDm"
@@ -34,7 +34,6 @@ client = Tickerall(api_key=TICKERALL_KEY)
 
 def start_session():
     try:
-        # Using the official SDK method - much more reliable
         session = client.sessions.start(
             broker="mt5",
             server=MT5_SERVER,
@@ -56,7 +55,6 @@ def place_order(account_id, side, entry_price, volume):
         tp = round(entry_price - (TP_PIPS * PIP), 5)
 
     try:
-        # Using the official SDK for orders
         order = client.orders.place(
             account_id,
             type="market",
@@ -79,7 +77,8 @@ def calculate_ema(prices, period):
     return ema
 
 def get_signal():
-    url = f"https://api.twelvedata.com/time_series?symbol={SYMBOL}&interval=5min&outputsize=50&apikey={TWELVEDATA_KEY}"
+    # OPTIMIZED: 1min interval, outputsize=10 to save API credits
+    url = f"https://api.twelvedata.com/time_series?symbol={SYMBOL}&interval=1min&outputsize=10&apikey={TWELVEDATA_KEY}"
     try:
         r = requests.get(url, timeout=10)
         data = r.json()
