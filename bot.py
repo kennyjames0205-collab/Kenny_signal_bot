@@ -2,6 +2,7 @@ import os
 import time
 import requests
 from datetime import datetime, timezone
+from tickerall import Tickerall
 
 # --- CONFIGURATION ---
 TICKERALL_KEY = os.environ.get("TICKERALL_KEY")
@@ -15,7 +16,6 @@ TWELVEDATA_KEY = "ab9054239e1c440f82ae43d470fc80dc"
 
 SYMBOL = "EURUSDm"
 VOLUME = 0.01
-BASE = "https://api.tickerall.com"
 
 PIP = 0.0001
 SL_PIPS = 5
@@ -29,23 +29,22 @@ def send_discord(msg):
     except Exception:
         pass
 
-def make_headers():
-    return {"Authorization": "Bearer " + str(TICKERALL_KEY)}
+# Initialize the official TickerAll client
+client = Tickerall(api_key=TICKERALL_KEY)
 
 def start_session():
-    data = {"broker": "mt5", "server": MT5_SERVER, "account": MT5_ACCOUNT, "password": MT5_PASSWORD}
     try:
-        # FIXED ENDPOINT HERE
-        r = requests.post(BASE + "/v1/accounts/connect", json=data, headers=make_headers())
-        
-        if r.status_code in (200, 201):
-            return r.json().get("session_id")
-        else:
-            print(f"❌ TICKERALL ERROR: Status {r.status_code} | Message: {r.text}")
-            return None
-            
+        # Using the official SDK method - much more reliable
+        session = client.sessions.start(
+            broker="mt5",
+            server=MT5_SERVER,
+            account=MT5_ACCOUNT,
+            password=MT5_PASSWORD
+        )
+        print(f"✅ Connected to MT5! Account ID: {session.account_id}")
+        return session.account_id
     except Exception as e:
-        print(f"❌ Connection Error: {e}")
+        print(f"❌ TICKERALL ERROR: {e}")
         return None
 
 def place_order(account_id, side, entry_price, volume):
@@ -56,16 +55,21 @@ def place_order(account_id, side, entry_price, volume):
         sl = round(entry_price + (SL_PIPS * PIP), 5)
         tp = round(entry_price - (TP_PIPS * PIP), 5)
 
-    data = {"type": "market", "symbol": SYMBOL, "side": side, "volume": volume, "sl": sl, "tp": tp}
     try:
-        r = requests.post(BASE + "/v1/account/" + str(account_id) + "/order", json=data, headers=make_headers())
-        if r.status_code in (200, 201):
-            return r.json().get("ticket"), sl, tp
-        else:
-            print("Order failed:", r.status_code, r.text)
+        # Using the official SDK for orders
+        order = client.orders.place(
+            account_id,
+            type="market",
+            symbol=SYMBOL,
+            side=side,
+            volume=volume,
+            stop_loss=sl,
+            take_profit=tp
+        )
+        return order.ticket, sl, tp
     except Exception as e:
-        print("Order error:", e)
-    return None, None, None
+        print(f"Order error: {e}")
+        return None, None, None
 
 def calculate_ema(prices, period):
     multiplier = 2 / (period + 1)
@@ -101,15 +105,15 @@ def get_signal():
 # --- MAIN LOOP ---
 def main():
     print("Starting Kenny Signal Bot v22...")
-    session_id = None
+    account_id = None
     last_trade_time = 0
     
     while True:
         try:
-            if not session_id:
-                session_id = start_session()
-                if not session_id:
-                    print("Failed to start TickerAll session. Retrying...")
+            if not account_id:
+                account_id = start_session()
+                if not account_id:
+                    print("Failed to start TickerAll session. Retrying in 10s...")
                     time.sleep(10)
                     continue
 
@@ -144,7 +148,7 @@ def main():
 
             if signal != "NO TRADE" and price:
                 side = "BUY" if signal == "CALL" else "SELL"
-                ticket, sl, tp = place_order(MT5_ACCOUNT, side, price, VOLUME)
+                ticket, sl, tp = place_order(account_id, side, price, VOLUME)
                 
                 if ticket:
                     send_discord(f"⚡ **Action Taken:** {side} {SYMBOL}\nPrice: {price}\nSL: {sl} | TP: {tp}")
