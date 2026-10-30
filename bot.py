@@ -35,16 +35,14 @@ def make_headers():
 def start_session():
     data = {"broker": "mt5", "server": MT5_SERVER, "account": MT5_ACCOUNT, "password": MT5_PASSWORD}
     try:
-        r = requests.post(BASE + "/v1/session", json=data, headers=make_headers())
+        # FIXED ENDPOINT HERE
+        r = requests.post(BASE + "/v1/accounts/connect", json=data, headers=make_headers())
         
-        # --- NEW DEBUGGING LOGIC ---
         if r.status_code in (200, 201):
             return r.json().get("session_id")
         else:
-            # This will print the exact error from TickerAll to Railway logs
             print(f"❌ TICKERALL ERROR: Status {r.status_code} | Message: {r.text}")
             return None
-        # ---------------------------
             
     except Exception as e:
         print(f"❌ Connection Error: {e}")
@@ -77,7 +75,6 @@ def calculate_ema(prices, period):
     return ema
 
 def get_signal():
-    # Fetching 5min candles to reduce noise
     url = f"https://api.twelvedata.com/time_series?symbol={SYMBOL}&interval=5min&outputsize=50&apikey={TWELVEDATA_KEY}"
     try:
         r = requests.get(url, timeout=10)
