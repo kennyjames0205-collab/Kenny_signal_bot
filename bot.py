@@ -1,3 +1,4 @@
+
 import os
 import time
 import requests
@@ -10,7 +11,8 @@ MT5_SERVER = os.environ.get("MT5_SERVER")
 MT5_PASSWORD = os.environ.get("MT5_PASSWORD")
 DISCORD_WEBHOOK = os.environ.get("WEBHOOK_URL")
 
-TWELVEDATA_KEY = "ab9054239e1c440f82ae43..." # (Make sure your full key is here)
+# PASTE YOUR FULL TWELVEDATA KEY HERE INSIDE THE QUOTES
+TWELVEDATA_KEY = "ab9054239e1c440f82ae43..." 
 
 SYMBOL = "EURUSDm"
 VOLUME = 0.01
@@ -68,7 +70,7 @@ def calculate_ema(prices, period):
     return ema
 
 def get_signal():
-    # Fetching 5min candles for a slightly smoother EMA signal (reduces noise)
+    # Fetching 5min candles to reduce noise
     url = f"https://api.twelvedata.com/time_series?symbol={SYMBOL}&interval=5min&outputsize=50&apikey={TWELVEDATA_KEY}"
     try:
         r = requests.get(url, timeout=10)
