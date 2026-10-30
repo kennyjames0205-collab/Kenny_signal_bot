@@ -77,8 +77,7 @@ def calculate_ema(prices, period):
     return ema
 
 def get_signal():
-    # FIXED: Changed {SYMBOL} to EUR/USD for TwelveData API
-    url = f"https://api.twelvedata.com/time_series?symbol=EUR/USD&interval=1min&outputsize=5&apikey={TWELVEDATA_KEY}"
+    url = f"https://api.twelvedata.com/time_series?symbol=EUR/USD&interval=1min&outputsize=30&apikey={TWELVEDATA_KEY}"
     try:
         r = requests.get(url, timeout=10)
         data = r.json()
@@ -136,9 +135,9 @@ def main():
                 continue
             # -------------------------------------------
 
-            # 3. Cooldown (Wait at least 5 minutes between trades)
-            if time.time() - last_trade_time < 300:
-                print("Cooldown active. Waiting 60 seconds...")
+            # 3. Cooldown (Wait at least 15 minutes between trades)
+            if time.time() - last_trade_time < 900:
+                print("Cooldown active (15 mins). Waiting 60 seconds...")
                 time.sleep(60)
                 continue
 
